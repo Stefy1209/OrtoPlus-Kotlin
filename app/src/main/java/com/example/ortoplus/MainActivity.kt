@@ -20,6 +20,7 @@ import com.example.ortoplus.ui.pages.MasterScreen
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 
 class MainActivity : ComponentActivity() {
@@ -32,18 +33,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val tokenManager = TokenManager()
+    private lateinit var tokenManager: TokenManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        tokenManager = TokenManager(applicationContext)
+        val startDestination = runBlocking {
+            if (tokenManager.hasToken()) Screen.Master.route else Screen.Login.route
+        }
+
         setContent {
             val navController = rememberNavController()
             val authService = AuthorizationService(httpClient, tokenManager)
             val clinicService = ClinicService(httpClient, tokenManager)
             val signalRService = SignalRService("http://10.0.2.2:5189", tokenManager)
 
-            NavHost(navController = navController, startDestination = Screen.Login.route) {
+            NavHost(navController = navController, startDestination = startDestination) {
                 composable(Screen.Login.route) {
                     LoginScreen(
                         authService = authService,

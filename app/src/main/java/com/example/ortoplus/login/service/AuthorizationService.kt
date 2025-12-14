@@ -47,7 +47,7 @@ class AuthorizationService(
         }
     }
 
-    fun logout() {
+    suspend fun logout() {
         tokenManager.clearToken()
         Log.d("AuthService", "User logged out, token cleared")
     }

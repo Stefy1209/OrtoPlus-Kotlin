@@ -2,18 +2,7 @@ package com.example.ortoplus.ui.pages
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -24,28 +13,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SearchBar
-import androidx.compose.material3.SearchBarDefaults
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -55,6 +24,7 @@ import com.example.ortoplus.clinic.models.Clinic
 import com.example.ortoplus.clinic.service.ClinicService
 import com.example.ortoplus.login.service.AuthorizationService
 import com.example.ortoplus.navigation.Screen
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,13 +33,16 @@ fun MasterScreen(
     clinicService: ClinicService,
     navController: NavController
 ) {
+    // 1. Create a CoroutineScope for handling button clicks (Logout)
+    val scope = rememberCoroutineScope()
+
     var searchQuery by remember { mutableStateOf("") }
     var selectedRating by remember { mutableIntStateOf(0) }
     var clinics by remember { mutableStateOf<List<Clinic>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Fetch Data
+    // Fetch Data on Load
     LaunchedEffect(Unit) {
         isLoading = true
         clinicService.getAllClinics()
@@ -100,20 +73,19 @@ fun MasterScreen(
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.primary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    titleContentColor = MaterialTheme.colorScheme.primary
                 ),
                 title = {
-                    Text(
-                        "OrtoPlus",
-                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
-                    )
+                    Text("OrtoPlus", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold))
                 },
                 actions = {
                     IconButton(onClick = {
-                        authService.logout()
-                        navController.navigate(Screen.Login.route) {
-                            popUpTo(0) { inclusive = true }
+                        // 2. FIX: Use scope.launch because logout() interacts with DataStore (suspend)
+                        scope.launch {
+                            authService.logout() // Assuming this calls tokenManager.clearToken()
+                            navController.navigate(Screen.Login.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
                         }
                     }) {
                         Icon(
@@ -131,12 +103,11 @@ fun MasterScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.surfaceContainerLowest)
         ) {
-            // --- Search Section ---
             SearchBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                expanded = false,
+                expanded = false, // We keep it false to act as a static bar
                 onExpandedChange = { },
                 colors = SearchBarDefaults.colors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -145,7 +116,7 @@ fun MasterScreen(
                     SearchBarDefaults.InputField(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
-                        onSearch = { /* Close keyboard logic could go here */ },
+                        onSearch = { /* Handle IME action if needed */ },
                         expanded = false,
                         onExpandedChange = { },
                         placeholder = { Text("Search clinics (name, city)...") },
@@ -158,8 +129,8 @@ fun MasterScreen(
                             }
                         }
                     )
-                },
-            ) {}
+                }
+            ) {} // Empty content block because expanded is always false
 
             // --- Filter Section ---
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -184,24 +155,11 @@ fun MasterScreen(
                             label = { Text("$rating+ Stars") },
                             leadingIcon = {
                                 if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                    Icon(Icons.Default.Check, contentDescription = null, Modifier.size(18.dp))
                                 } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Star,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
+                                    Icon(Icons.Default.Star, contentDescription = null, Modifier.size(16.dp))
                                 }
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                            }
                         )
                     }
                 }
@@ -279,7 +237,7 @@ fun ClinicCard(
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = clinic.rating.toString(),
+                        text = String.format("%.1f", clinic.rating), // Format to 1 decimal
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.Bold
