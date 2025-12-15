@@ -1,6 +1,13 @@
 package com.example.ortoplus.ui.pages
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,33 +62,69 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.example.ortoplus.clinic.models.Clinic
-import com.example.ortoplus.clinic.service.ClinicService
+import com.example.ortoplus.clinic.service.ClinicRepository
 import com.example.ortoplus.notification.SignalRService
 import com.example.ortoplus.review.models.Review
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+private const val NOTIFICATION_CHANNEL_ID = "signalr_messages"
+private const val NOTIFICATION_CHANNEL_NAME = "SignalR Messages"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreen(
     clinicId: String,
-    clinicService: ClinicService,
+    clinicRepository: ClinicRepository,
     signalRService: SignalRService,
     onNavigateBack: () -> Unit
 ) {
-    LocalContext.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     val snackBarHostState = remember { SnackbarHostState() }
+    val notificationManager = remember {
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    }
 
     var clinic by remember { mutableStateOf<Clinic?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var showReviewDialog by remember { mutableStateOf(false) }
 
+    // Request notification permission
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) {
+            scope.launch {
+                snackBarHostState.showSnackbar("Notification permission denied")
+            }
+        }
+    }
+
+    // Create notification channel and request permission
+    LaunchedEffect(Unit) {
+        createNotificationChannel(notificationManager)
+
+        when (ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+        )) {
+            PackageManager.PERMISSION_GRANTED -> {
+                // Permission already granted
+            }
+            else -> {
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     LaunchedEffect(clinicId) {
-        clinicService.getClinicById(clinicId)
+        clinicRepository.getClinicById(clinicId)
             .onSuccess {
                 clinic = it
                 isLoading = false
@@ -93,15 +136,34 @@ fun DetailScreen(
     }
 
     DisposableEffect(Unit) {
+        println("DetailScreen: Setting up SignalR connection")
         val job = scope.launch(Dispatchers.IO) {
-            signalRService.startConnection { message ->
-                scope.launch(Dispatchers.Main) {
-                    snackBarHostState.showSnackbar(message)
+            try {
+                signalRService.startConnection { message ->
+                    println("DetailScreen: Received SignalR message: $message")
+
+                    // Show notification
+                    try {
+                        showNotification(context, notificationManager, message)
+                    } catch (e: Exception) {
+                        println("DetailScreen: Failed to show notification: ${e.message}")
+                        e.printStackTrace()
+                    }
+
+                    // Show snackbar
+                    scope.launch(Dispatchers.Main) {
+                        println("DetailScreen: Showing snackbar")
+                        snackBarHostState.showSnackbar(message)
+                    }
                 }
+            } catch (e: Exception) {
+                println("DetailScreen: Error in SignalR connection: ${e.message}")
+                e.printStackTrace()
             }
         }
 
         onDispose {
+            println("DetailScreen: Cleaning up SignalR connection")
             signalRService.stopConnection()
             job.cancel()
         }
@@ -109,18 +171,23 @@ fun DetailScreen(
 
     val onSubmitReview = { rating: Int, comment: String ->
         scope.launch {
-            clinicService.addReview(clinicId, comment, rating)
+            println("DetailScreen: Submitting review...")
+            clinicRepository.addReview(clinicId, comment, rating)
                 .onSuccess { review ->
+                    println("DetailScreen: Review created successfully")
                     val updatedReviews = clinic!!.reviews + review
                     clinic = clinic!!.copy(reviews = updatedReviews.toMutableList())
                     showReviewDialog = false
                 }
                 .onFailure { e ->
-                    scope.launch {
-                        snackBarHostState.showSnackbar(
-                            message = "Failed to add review: ${e.message ?: "Unknown error"}"
-                        )
-                    }
+//                    println("DetailScreen: Failed to create review: ${e.message}")
+//                    scope.launch {
+//                        snackBarHostState.showSnackbar(
+//                            message = "Failed to add review: ${e.message ?: "Unknown error"}"
+//                        )
+//                    }
+
+
                 }
         }
     }
@@ -152,6 +219,59 @@ fun DetailScreen(
     }
 }
 
+private fun createNotificationChannel(
+    notificationManager: NotificationManager
+) {
+    val channel = NotificationChannel(
+        NOTIFICATION_CHANNEL_ID,
+        NOTIFICATION_CHANNEL_NAME,
+        NotificationManager.IMPORTANCE_DEFAULT
+    ).apply {
+        description = "Notifications from SignalR service"
+        enableVibration(true)
+    }
+    notificationManager.createNotificationChannel(channel)
+}
+
+private fun showNotification(
+    context: Context,
+    notificationManager: NotificationManager,
+    message: String
+) {
+    println("showNotification called with message: $message")
+
+    // Check permission
+    val hasPermission = ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.POST_NOTIFICATIONS
+    ) == PackageManager.PERMISSION_GRANTED
+
+    println("Notification permission granted: $hasPermission")
+
+    if (!hasPermission) {
+        println("Notification permission not granted, skipping notification")
+        return
+    }
+
+    try {
+        val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("New Review")
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+
+        val notificationId = System.currentTimeMillis().toInt()
+        println("Showing notification with ID: $notificationId")
+        notificationManager.notify(notificationId, notification)
+        println("Notification posted successfully")
+    } catch (e: Exception) {
+        println("Error showing notification: ${e.message}")
+        e.printStackTrace()
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailContent(
@@ -159,7 +279,7 @@ fun DetailContent(
     onNavigateBack: () -> Unit,
     onAddReviewClick: () -> Unit,
     snackBarHostState: SnackbarHostState
-    ) {
+) {
     val context = LocalContext.current
 
     val openMap = remember {
@@ -167,7 +287,6 @@ fun DetailContent(
             val gmmIntentUri = "geo:${clinic.latitude},${clinic.longitude}?q=${clinic.latitude},${clinic.longitude}(${clinic.name})".toUri()
             val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
             mapIntent.setPackage("com.google.android.apps.maps")
-            // Check if maps is installed, otherwise let system handle it
             if (mapIntent.resolveActivity(context.packageManager) != null) {
                 context.startActivity(mapIntent)
             } else {
@@ -206,12 +325,10 @@ fun DetailContent(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header Section (Name & Rating)
             item {
                 ClinicHeader(clinic)
             }
 
-            // Address & Map Action
             item {
                 AddressCard(
                     addressText = clinic.address.toString(),
@@ -219,7 +336,6 @@ fun DetailContent(
                 )
             }
 
-            // Reviews Section Title
             item {
                 Text(
                     text = "Patient Reviews (${clinic.reviews.size})",
@@ -228,7 +344,6 @@ fun DetailContent(
                 )
             }
 
-            // List of Reviews
             if (clinic.reviews.isEmpty()) {
                 item {
                     Text(
@@ -244,7 +359,6 @@ fun DetailContent(
                 }
             }
 
-            // Spacer for FAB
             item { Spacer(modifier = Modifier.height(80.dp)) }
         }
     }
@@ -356,7 +470,6 @@ fun AddReviewDialog(
                 Text("Rate your experience:", style = MaterialTheme.typography.bodyMedium)
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Star Rating Row
                 Row {
                     for (i in 1..5) {
                         val isSelected = i <= rating

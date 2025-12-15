@@ -1,11 +1,28 @@
 package com.example.ortoplus.ui.pages
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Check
@@ -13,47 +30,125 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SearchBar
+import androidx.compose.material3.SearchBarDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.ortoplus.clinic.models.Clinic
-import com.example.ortoplus.clinic.service.ClinicService
+import com.example.ortoplus.clinic.service.ClinicRepository
 import com.example.ortoplus.login.service.AuthorizationService
 import com.example.ortoplus.navigation.Screen
 import kotlinx.coroutines.launch
+
+@Composable
+fun rememberNetworkConnectivity(): State<Boolean> {
+    val context = LocalContext.current
+    return produceState(initialValue = isNetworkAvailable(context)) {
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                value = true
+            }
+
+            override fun onLost(network: Network) {
+                value = false
+            }
+        }
+
+        val networkRequest = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        connectivityManager.registerNetworkCallback(networkRequest, callback)
+
+        awaitDispose {
+            connectivityManager.unregisterNetworkCallback(callback)
+        }
+    }
+}
+
+private fun isNetworkAvailable(context: Context): Boolean {
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val network = connectivityManager.activeNetwork ?: return false
+    val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MasterScreen(
     authService: AuthorizationService,
-    clinicService: ClinicService,
+    clinicRepository: ClinicRepository,
     navController: NavController
 ) {
-    // 1. Create a CoroutineScope for handling button clicks (Logout)
     val scope = rememberCoroutineScope()
+    val isOnline by rememberNetworkConnectivity()
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedRating by remember { mutableIntStateOf(0) }
     var clinics by remember { mutableStateOf<List<Clinic>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var isRefreshing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    // Function to load clinics
+    fun loadClinics(isRefresh: Boolean = false) {
+        scope.launch {
+            if (isRefresh) {
+                isRefreshing = true
+            } else {
+                isLoading = true
+            }
+
+            clinicRepository.getAllClinics().collect { result ->
+                result.onSuccess { fetchedClinics ->
+                    clinics = fetchedClinics
+                    isLoading = false
+                    isRefreshing = false
+                    errorMessage = null
+                }.onFailure { error ->
+                    // Only show error if we have no data at all
+                    if (clinics.isEmpty()) {
+                        errorMessage = error.message ?: "Failed to load clinics"
+                    }
+                    isLoading = false
+                    isRefreshing = false
+                }
+            }
+        }
+    }
 
     // Fetch Data on Load
     LaunchedEffect(Unit) {
-        isLoading = true
-        clinicService.getAllClinics()
-            .onSuccess {
-                clinics = it
-                isLoading = false
-            }
-            .onFailure {
-                errorMessage = it.message ?: "Failed to load clinics"
-                isLoading = false
-            }
+        loadClinics()
     }
 
     // Filter Logic
@@ -76,13 +171,33 @@ fun MasterScreen(
                     titleContentColor = MaterialTheme.colorScheme.primary
                 ),
                 title = {
-                    Text("OrtoPlus", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            "OrtoPlus",
+                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+
+                        // Network Status Indicator
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(
+                                    color = if (isOnline)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.error,
+                                    shape = CircleShape
+                                )
+                        )
+                    }
                 },
                 actions = {
                     IconButton(onClick = {
-                        // 2. FIX: Use scope.launch because logout() interacts with DataStore (suspend)
                         scope.launch {
-                            authService.logout() // Assuming this calls tokenManager.clearToken()
+                            authService.logout()
                             navController.navigate(Screen.Login.route) {
                                 popUpTo(0) { inclusive = true }
                             }
@@ -107,7 +222,7 @@ fun MasterScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                expanded = false, // We keep it false to act as a static bar
+                expanded = false,
                 onExpandedChange = { },
                 colors = SearchBarDefaults.colors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -116,7 +231,7 @@ fun MasterScreen(
                     SearchBarDefaults.InputField(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
-                        onSearch = { /* Handle IME action if needed */ },
+                        onSearch = { },
                         expanded = false,
                         onExpandedChange = { },
                         placeholder = { Text("Search clinics (name, city)...") },
@@ -130,7 +245,7 @@ fun MasterScreen(
                         }
                     )
                 }
-            ) {} // Empty content block because expanded is always false
+            ) {}
 
             // --- Filter Section ---
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -165,32 +280,38 @@ fun MasterScreen(
                 }
             }
 
-            // --- List Content ---
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                } else if (errorMessage != null) {
-                    Text(
-                        text = errorMessage!!,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                } else if (filteredClinics.isEmpty()) {
-                    Text(
-                        text = "No clinics found matching criteria.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                } else {
-                    LazyColumn(
-                        contentPadding = PaddingValues(bottom = 16.dp, start = 16.dp, end = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(filteredClinics) { clinic ->
-                            ClinicCard(clinic = clinic, onClick = {
-                                navController.navigate(Screen.Detail.createRoute(clinic.clinicId))
-                            })
+            // --- List Content with Pull-to-Refresh ---
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = { loadClinics(isRefresh = true) },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    } else if (errorMessage != null) {
+                        Text(
+                            text = errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else if (filteredClinics.isEmpty()) {
+                        Text(
+                            text = "No clinics found matching criteria.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else {
+                        LazyColumn(
+                            contentPadding = PaddingValues(bottom = 16.dp, start = 16.dp, end = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(filteredClinics) { clinic ->
+                                ClinicCard(clinic = clinic, onClick = {
+                                    navController.navigate(Screen.Detail.createRoute(clinic.clinicId))
+                                })
+                            }
                         }
                     }
                 }
@@ -237,7 +358,7 @@ fun ClinicCard(
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = String.format("%.1f", clinic.rating), // Format to 1 decimal
+                        text = String.format("%.1f", clinic.rating),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.Bold
