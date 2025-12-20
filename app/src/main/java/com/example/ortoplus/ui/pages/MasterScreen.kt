@@ -9,6 +9,11 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -296,31 +301,47 @@ fun MasterScreen(
                 onRefresh = { loadClinics(isRefresh = true) },
                 modifier = Modifier.fillMaxSize()
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    if (isLoading) {
-                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                    } else if (errorMessage != null) {
-                        Text(
-                            text = errorMessage!!,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    } else if (filteredClinics.isEmpty()) {
-                        Text(
-                            text = "No clinics found matching criteria.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    } else {
-                        LazyColumn(
-                            contentPadding = PaddingValues(bottom = 16.dp, start = 16.dp, end = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(filteredClinics) { clinic ->
-                                ClinicCard(clinic = clinic, onClick = {
-                                    navController.navigate(Screen.Detail.createRoute(clinic.clinicId))
-                                })
+                AnimatedContent(
+                    targetState = isLoading,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400))
+                    }
+                ) { targetLoading ->
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (targetLoading) {
+                            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                        } else if (errorMessage != null) {
+                            Text(
+                                text = errorMessage!!,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        } else if (filteredClinics.isEmpty()) {
+                            Text(
+                                text = "No clinics found.",
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        } else {
+                            LazyColumn(
+                                contentPadding = PaddingValues(
+                                    bottom = 16.dp,
+                                    start = 16.dp,
+                                    end = 16.dp
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(filteredClinics, key = { it.clinicId }) { clinic ->
+                                    Box(
+                                        modifier = Modifier.animateItem(
+                                            fadeInSpec = tween(300),
+                                            placementSpec = tween(400)
+                                        )
+                                    ) {
+                                        ClinicCard(clinic = clinic, onClick = {
+                                            navController.navigate(Screen.Detail.createRoute(clinic.clinicId))
+                                        })
+                                    }
+                                }
                             }
                         }
                     }
