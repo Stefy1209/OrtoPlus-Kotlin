@@ -25,5 +25,6 @@ data class ReviewEntity(
     val rating: Int,
     val date: String,
     val userAccountId: String,
-    val clinicId: String
+    val clinicId: String,
+    val synced: Boolean = false
 )

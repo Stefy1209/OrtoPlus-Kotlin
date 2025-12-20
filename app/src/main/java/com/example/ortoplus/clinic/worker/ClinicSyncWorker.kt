@@ -28,7 +28,17 @@ class ClinicSyncWorker(
         Log.d(TAG, "Starting clinic sync work")
 
         try {
-            val repository = createClinicRepository()
+            val db = createDatabase()
+            val repository = createClinicRepository(db)
+            val clinicService = createClinicService()
+
+            // Step 1: Sync unsynced reviews to backend
+            val reviewSyncResult = syncUnsyncedReviews(db, clinicService)
+            if (!reviewSyncResult) {
+                Log.w(TAG, "Review sync had issues, but continuing with clinic sync")
+            }
+
+            // Step 2: Refresh clinics from backend
             val result = repository.refreshClinics()
 
             return if (result.isSuccess) {
@@ -45,7 +55,65 @@ class ClinicSyncWorker(
         }
     }
 
-    private fun createClinicRepository(): ClinicRepository {
+    private suspend fun syncUnsyncedReviews(
+        db: AppDatabase,
+        clinicService: ClinicService
+    ): Boolean {
+        return try {
+            val unsyncedReviews = db.reviewDao().getUnsyncedReviews()
+            Log.d(TAG, "Found ${unsyncedReviews.size} unsynced reviews")
+
+            var successCount = 0
+            var failureCount = 0
+
+            for (review in unsyncedReviews) {
+                val result = clinicService.addReview(
+                    clinicId = review.clinicId,
+                    comment = review.comment,
+                    rating = review.rating
+                )
+
+                if (result.isSuccess) {
+                    // Mark review as synced
+                    db.reviewDao().markSynced(review.reviewId)
+                    successCount++
+                    Log.d(TAG, "Successfully synced review: ${review.reviewId}")
+                } else {
+                    failureCount++
+                    Log.e(TAG, "Failed to sync review ${review.reviewId}: ${result.exceptionOrNull()?.message}")
+                }
+            }
+
+            Log.d(TAG, "Review sync completed: $successCount succeeded, $failureCount failed")
+            failureCount == 0
+        } catch (e: Exception) {
+            Log.e(TAG, "Error syncing reviews", e)
+            false
+        }
+    }
+
+    private fun createDatabase(): AppDatabase {
+        return Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java,
+            "ortoplus-db"
+        ).build()
+    }
+
+    private fun createClinicService(): ClinicService {
+        val httpClient = HttpClient {
+            install(ContentNegotiation) {
+                json(Json {
+                    ignoreUnknownKeys = true
+                    prettyPrint = true
+                })
+            }
+        }
+        val tokenManager = TokenManager(applicationContext)
+        return ClinicService(httpClient, tokenManager)
+    }
+
+    private fun createClinicRepository(db: AppDatabase): ClinicRepository {
         val httpClient = HttpClient {
             install(ContentNegotiation) {
                 json(Json {
@@ -56,12 +124,6 @@ class ClinicSyncWorker(
         }
 
         val tokenManager = TokenManager(applicationContext)
-        val db = Room.databaseBuilder(
-            applicationContext,
-            AppDatabase::class.java,
-            "ortoplus-db"
-        ).build()
-
         val clinicDao = db.clinicDao()
         val clinicService = ClinicService(httpClient, tokenManager)
         val clinicLocalService = ClinicLocalService(clinicDao)

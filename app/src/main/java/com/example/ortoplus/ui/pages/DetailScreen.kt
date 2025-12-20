@@ -131,7 +131,6 @@ fun DetailScreen(
             }
             .onFailure {
                 isLoading = false
-                // Handle error
             }
     }
 

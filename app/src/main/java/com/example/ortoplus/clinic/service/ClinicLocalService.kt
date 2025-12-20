@@ -35,7 +35,7 @@ class ClinicLocalService(
         }
     }
 
-    suspend fun addReview(clinicId: String, comment: String, rating: Int, reviewId: String, userAccountId: String, date: String): Result<Review> {
+    suspend fun addReview(clinicId: String, comment: String, rating: Int, reviewId: String, userAccountId: String, date: String, synced: Boolean): Result<Review> {
         return try {
             val review = ReviewEntity(
                 reviewId = reviewId,
@@ -43,7 +43,8 @@ class ClinicLocalService(
                 rating = rating,
                 date = date,
                 userAccountId = userAccountId,
-                clinicId = clinicId
+                clinicId = clinicId,
+                synced = synced
             )
             clinicDao.insertReview(review)
             Result.success(review.toReview())

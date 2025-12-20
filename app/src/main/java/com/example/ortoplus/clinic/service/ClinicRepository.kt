@@ -86,7 +86,8 @@ class ClinicRepository(
                             rating = rating,
                             reviewId = review.reviewId,
                             userAccountId = review.userAccountId,
-                            date = review.date
+                            date = review.date,
+                            synced = true
                         )
                     }
                 }
@@ -96,8 +97,16 @@ class ClinicRepository(
                 Result.failure(Exception("Cannot add review while offline"))
             }
         } else {
-            Log.d("ClinicRepository", "Offline - cannot add review")
-            Result.failure(Exception("Cannot add review while offline"))
+            Log.d("ClinicRepository", "Offline - add review locally")
+            val result = localService.addReview(
+                clinicId = clinicId,
+                comment = comment,
+                rating = rating,
+                reviewId = (0..1000000).random().toString(),
+                userAccountId = "0",
+                date = "",
+                synced = false)
+            result
         }
     }
 
