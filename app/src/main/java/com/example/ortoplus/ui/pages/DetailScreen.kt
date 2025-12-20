@@ -1,6 +1,7 @@
 package com.example.ortoplus.ui.pages
 
 import android.Manifest
+import android.R.drawable.ic_dialog_info
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -69,9 +70,15 @@ import com.example.ortoplus.clinic.models.Clinic
 import com.example.ortoplus.clinic.service.ClinicRepository
 import com.example.ortoplus.notification.SignalRService
 import com.example.ortoplus.review.models.Review
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.rememberCameraPositionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-
 private const val NOTIFICATION_CHANNEL_ID = "signalr_messages"
 private const val NOTIFICATION_CHANNEL_NAME = "SignalR Messages"
 
@@ -178,16 +185,7 @@ fun DetailScreen(
                     clinic = clinic!!.copy(reviews = updatedReviews.toMutableList())
                     showReviewDialog = false
                 }
-                .onFailure { e ->
-//                    println("DetailScreen: Failed to create review: ${e.message}")
-//                    scope.launch {
-//                        snackBarHostState.showSnackbar(
-//                            message = "Failed to add review: ${e.message ?: "Unknown error"}"
-//                        )
-//                    }
-
-
-                }
+                .onFailure {}
         }
     }
 
@@ -254,7 +252,7 @@ private fun showNotification(
 
     try {
         val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(ic_dialog_info)
             .setContentTitle("New Review")
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -294,6 +292,9 @@ fun DetailContent(
         }
     }
 
+    // State for the Map Camera
+    val clinicLocation = LatLng(clinic.latitude.toDouble(), clinic.longitude.toDouble())
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -326,6 +327,13 @@ fun DetailContent(
         ) {
             item {
                 ClinicHeader(clinic)
+            }
+
+            item {
+                ClinicMapCard(
+                    location = clinicLocation,
+                    clinicName = clinic.name
+                )
             }
 
             item {
@@ -383,6 +391,48 @@ fun ClinicHeader(clinic: Clinic) {
             Text(
                 text = "${clinic.rating} / 5",
                 style = MaterialTheme.typography.titleMedium
+            )
+        }
+    }
+}
+
+@Composable
+fun ClinicMapCard(
+    location: LatLng,
+    clinicName: String,
+    modifier: Modifier = Modifier
+) {
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(location, 15f)
+    }
+
+    val markerState = remember(location) {
+        MarkerState(position = location)
+    }
+
+    // Update camera when location changes
+    LaunchedEffect(location) {
+        cameraPositionState.animate(
+            CameraUpdateFactory.newLatLngZoom(location, 15f),
+            durationMs = 1000
+        )
+    }
+
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(250.dp),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = cameraPositionState
+        ) {
+            Marker(
+                state = markerState,
+                title = clinicName,
+                snippet = "Clinic Location"
             )
         }
     }
