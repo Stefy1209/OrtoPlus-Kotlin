@@ -1,5 +1,10 @@
 package com.example.ortoplus.ui.pages
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Check
@@ -29,7 +35,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,48 +44,111 @@ import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.ortoplus.clinic.models.Clinic
-import com.example.ortoplus.clinic.service.ClinicService
+import com.example.ortoplus.clinic.service.ClinicRepository
 import com.example.ortoplus.login.service.AuthorizationService
 import com.example.ortoplus.navigation.Screen
+import kotlinx.coroutines.launch
+
+@Composable
+fun rememberNetworkConnectivity(): State<Boolean> {
+    val context = LocalContext.current
+    return produceState(initialValue = isNetworkAvailable(context)) {
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                value = true
+            }
+
+            override fun onLost(network: Network) {
+                value = false
+            }
+        }
+
+        val networkRequest = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        connectivityManager.registerNetworkCallback(networkRequest, callback)
+
+        awaitDispose {
+            connectivityManager.unregisterNetworkCallback(callback)
+        }
+    }
+}
+
+private fun isNetworkAvailable(context: Context): Boolean {
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val network = connectivityManager.activeNetwork ?: return false
+    val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MasterScreen(
     authService: AuthorizationService,
-    clinicService: ClinicService,
+    clinicRepository: ClinicRepository,
     navController: NavController
 ) {
+    val scope = rememberCoroutineScope()
+    val isOnline by rememberNetworkConnectivity()
+
     var searchQuery by remember { mutableStateOf("") }
     var selectedRating by remember { mutableIntStateOf(0) }
     var clinics by remember { mutableStateOf<List<Clinic>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var isRefreshing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Fetch Data
+    // Function to load clinics
+    fun loadClinics(isRefresh: Boolean = false) {
+        scope.launch {
+            if (isRefresh) {
+                isRefreshing = true
+            } else {
+                isLoading = true
+            }
+
+            clinicRepository.getAllClinics().collect { result ->
+                result.onSuccess { fetchedClinics ->
+                    clinics = fetchedClinics
+                    isLoading = false
+                    isRefreshing = false
+                    errorMessage = null
+                }.onFailure { error ->
+                    // Only show error if we have no data at all
+                    if (clinics.isEmpty()) {
+                        errorMessage = error.message ?: "Failed to load clinics"
+                    }
+                    isLoading = false
+                    isRefreshing = false
+                }
+            }
+        }
+    }
+
+    // Fetch Data on Load
     LaunchedEffect(Unit) {
-        isLoading = true
-        clinicService.getAllClinics()
-            .onSuccess {
-                clinics = it
-                isLoading = false
-            }
-            .onFailure {
-                errorMessage = it.message ?: "Failed to load clinics"
-                isLoading = false
-            }
+        loadClinics()
     }
 
     // Filter Logic
@@ -100,20 +168,39 @@ fun MasterScreen(
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.primary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    titleContentColor = MaterialTheme.colorScheme.primary
                 ),
                 title = {
-                    Text(
-                        "OrtoPlus",
-                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            "OrtoPlus",
+                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+
+                        // Network Status Indicator
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(
+                                    color = if (isOnline)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.error,
+                                    shape = CircleShape
+                                )
+                        )
+                    }
                 },
                 actions = {
                     IconButton(onClick = {
-                        authService.logout()
-                        navController.navigate(Screen.Login.route) {
-                            popUpTo(0) { inclusive = true }
+                        scope.launch {
+                            authService.logout()
+                            navController.navigate(Screen.Login.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
                         }
                     }) {
                         Icon(
@@ -131,7 +218,6 @@ fun MasterScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.surfaceContainerLowest)
         ) {
-            // --- Search Section ---
             SearchBar(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -145,7 +231,7 @@ fun MasterScreen(
                     SearchBarDefaults.InputField(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
-                        onSearch = { /* Close keyboard logic could go here */ },
+                        onSearch = { },
                         expanded = false,
                         onExpandedChange = { },
                         placeholder = { Text("Search clinics (name, city)...") },
@@ -158,7 +244,7 @@ fun MasterScreen(
                             }
                         }
                     )
-                },
+                }
             ) {}
 
             // --- Filter Section ---
@@ -184,55 +270,48 @@ fun MasterScreen(
                             label = { Text("$rating+ Stars") },
                             leadingIcon = {
                                 if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                    Icon(Icons.Default.Check, contentDescription = null, Modifier.size(18.dp))
                                 } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Star,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
+                                    Icon(Icons.Default.Star, contentDescription = null, Modifier.size(16.dp))
                                 }
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                            }
                         )
                     }
                 }
             }
 
-            // --- List Content ---
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                } else if (errorMessage != null) {
-                    Text(
-                        text = errorMessage!!,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                } else if (filteredClinics.isEmpty()) {
-                    Text(
-                        text = "No clinics found matching criteria.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                } else {
-                    LazyColumn(
-                        contentPadding = PaddingValues(bottom = 16.dp, start = 16.dp, end = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(filteredClinics) { clinic ->
-                            ClinicCard(clinic = clinic, onClick = {
-                                navController.navigate(Screen.Detail.createRoute(clinic.clinicId))
-                            })
+            // --- List Content with Pull-to-Refresh ---
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = { loadClinics(isRefresh = true) },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    } else if (errorMessage != null) {
+                        Text(
+                            text = errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else if (filteredClinics.isEmpty()) {
+                        Text(
+                            text = "No clinics found matching criteria.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else {
+                        LazyColumn(
+                            contentPadding = PaddingValues(bottom = 16.dp, start = 16.dp, end = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(filteredClinics) { clinic ->
+                                ClinicCard(clinic = clinic, onClick = {
+                                    navController.navigate(Screen.Detail.createRoute(clinic.clinicId))
+                                })
+                            }
                         }
                     }
                 }
@@ -279,7 +358,7 @@ fun ClinicCard(
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = clinic.rating.toString(),
+                        text = String.format("%.1f", clinic.rating),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.Bold
