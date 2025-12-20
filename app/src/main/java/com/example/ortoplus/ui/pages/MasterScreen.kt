@@ -1,6 +1,10 @@
 package com.example.ortoplus.ui.pages
 
 import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -10,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ContextualFlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -111,6 +116,8 @@ fun MasterScreen(
 ) {
     val scope = rememberCoroutineScope()
     val isOnline by rememberNetworkConnectivity()
+    val lightLevel by rememberLightLevel()
+    val logoAlpha = (lightLevel / 1000f).coerceIn(0.3f, 1.0f)
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedRating by remember { mutableIntStateOf(0) }
@@ -177,7 +184,10 @@ fun MasterScreen(
                     ) {
                         Text(
                             "OrtoPlus",
-                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = logoAlpha)
+                            )
                         )
 
                         // Network Status Indicator
@@ -390,6 +400,30 @@ fun ClinicCard(
                     maxLines = 1
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun rememberLightLevel(): State<Float> {
+    val context = LocalContext.current
+
+    return produceState(initialValue = 500f) {
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
+
+        val listener = object : SensorEventListener{
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+            override fun onSensorChanged(event: SensorEvent) {
+                value = event.values[0]
+            }
+        }
+
+        sensorManager.registerListener(listener, lightSensor, SensorManager.SENSOR_DELAY_UI)
+
+        awaitDispose {
+            sensorManager.unregisterListener(listener)
         }
     }
 }
